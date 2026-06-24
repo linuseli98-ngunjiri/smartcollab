@@ -17,10 +17,28 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app, origins="*")
 
+#@app.after_request
+#def add_ngrok_header(response):
+#    response.headers["ngrok-skip-brolikewser-warning"] = "true"
+#    return response
+
 @app.after_request
-def add_ngrok_header(response):
+def after_request(response):
     response.headers["ngrok-skip-browser-warning"] = "true"
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
     return response
+
+@app.before_request
+def handle_options():
+    if request.method == "OPTIONS":
+        response = app.make_default_options_response()
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+        return response
+
 # Trello credentials
 TRELLO_API_KEY = os.getenv("TRELLO_API_KEY")
 TRELLO_TOKEN   = os.getenv("TRELLO_TOKEN")
@@ -61,12 +79,12 @@ def create_drive_folder(folder_name):
     ).execute()
     return folder["id"], folder["webViewLink"]
 
-# ── TEST ROUTE ──
+
 @app.route("/")
 def home():
     return jsonify({"status": "SmartCollab backend running"})
 
-# ── CREATE GROUP ──
+
 @app.route("/create-group", methods=["POST"])
 def create_group():
     data       = request.json
@@ -127,7 +145,7 @@ def create_group():
         "drive_folder_url": drive_folder_url
     })
 
-# ── GET ALL GROUPS ──
+
 @app.route("/groups", methods=["GET"])
 def get_groups():
     db = get_db()
@@ -138,7 +156,7 @@ def get_groups():
     db.close()
     return jsonify(groups)
 
-# ── SAVE USER TO DB ON LOGIN ──
+
 @app.route("/save-user", methods=["POST"])
 def save_user():
     data  = request.json
@@ -152,14 +170,14 @@ def save_user():
     cursor.execute("""
         INSERT INTO users (id, name, email, role)
         VALUES (%s, %s, %s, %s)
-        ON DUPLICATE KEY UPDATE name=%s, role=%s
-    """, (uid, name, email, role, name, role))
+        ON DUPLICATE KEY UPDATE name=%s
+    """, (uid, name, email, role, name))
     db.commit()
     cursor.close()
     db.close()
 
     return jsonify({"message": "User saved"})
-# ── TRELLO WEBHOOK ──
+
 @app.route("/trello-webhook", methods=["POST", "HEAD", "GET"])
 def trello_webhook():
     if request.method in ["HEAD", "GET"]:
@@ -196,7 +214,7 @@ def trello_webhook():
 
     return jsonify({"status": "ok"})
 
-# ── UPDATE CONTRIBUTION SCORES ──
+# ---
 def update_scores(board_id, user_email, action_type):
     weights = {
         "updateCard":          30,
@@ -230,7 +248,7 @@ def update_scores(board_id, user_email, action_type):
     db.commit()
     cursor.close()
     db.close()
- # ── GET CONTRIBUTION SCORES ──
+ # ---
 @app.route("/scores/<group_id>", methods=["GET"])
 def get_scores(group_id):
     db = get_db()
@@ -245,6 +263,176 @@ def get_scores(group_id):
     scores = cursor.fetchall()
     cursor.close()
     db.close()
-    return jsonify(scores)  
+    return jsonify(scores)
+
+@app.route("/peer-rating", methods=["POST"])
+def peer_rating():
+    data        = request.json
+    group_id    = data.get("group_id")
+    rater_email = data.get("rater_email")
+    rated_email = data.get("rated_email")
+    score       = data.get("score")
+
+    db = get_db()
+    cursor = db.cursor()
+
+    # Check if already rated
+    cursor.execute("""
+        SELECT id FROM activity_logs
+        WHERE group_id = %s AND user_email = %s
+        AND action_type = 'peerRating'
+        AND description LIKE %s
+    """, (group_id, rater_email, f"%{rated_email}%"))
+    existing = cursor.fetchone()
+
+    if existing:
+        cursor.close()
+        db.close()
+        return jsonify({"message": "Already rated this member"}), 400
+
+    # Save peer score
+    cursor.execute("""
+        INSERT INTO contribution_scores (group_id, user_email, peer_score, total_score)
+        VALUES (%s, %s, %s, %s)
+        ON DUPLICATE KEY UPDATE
+        peer_score = peer_score + %s,
+        total_score = total_score + %s
+    """, (group_id, rated_email, score, score, score, score))
+
+    # Log the rating action
+    cursor.execute("""
+        INSERT INTO activity_logs (group_id, user_email, action_type, description)
+        VALUES (%s, %s, 'peerRating', %s)
+    """, (group_id, rater_email, f"rated {rated_email}: {score}/5"))
+
+    db.commit()
+    cursor.close()
+    db.close()
+
+    return jsonify({"message": "Rating submitted"})
+
+
+@app.route("/my-group/<email>", methods=["GET"])
+def my_group(email):
+    db = get_db()
+    cursor = db.cursor(dictionary=True)
+    cursor.execute("""
+        SELECT g.*, gm.role as member_role
+        FROM groups_table g
+        JOIN group_members gm ON g.id = gm.group_id
+        WHERE gm.user_email = %s
+    """, (email,))
+    groups = cursor.fetchall()
+    cursor.close()
+    db.close()
+    return jsonify(groups)
+
+
+@app.route("/group-members/<path:group_id>", methods=["GET", "OPTIONS"])
+def get_group_members(group_id):
+    if request.method == "OPTIONS":
+        return "", 200
+    db = get_db()
+    cursor = db.cursor(dictionary=True)
+    cursor.execute("""
+        SELECT user_email, role FROM group_members
+        WHERE group_id = %s
+    """, (group_id,))
+    members = cursor.fetchall()
+    cursor.close()
+    db.close()
+    return jsonify(members)
+
+
+@app.route("/my-score/<group_id>/<email>", methods=["GET"])
+def my_score(group_id, email):
+    db = get_db()
+    cursor = db.cursor(dictionary=True)
+    cursor.execute("""
+        SELECT * FROM contribution_scores
+        WHERE group_id = %s AND user_email = %s
+    """, (group_id, email))
+    score = cursor.fetchone()
+    cursor.close()
+    db.close()
+    return jsonify(score or {})
+
+
+# GET USER ROLE POST
+@app.route("/get-role", methods=["POST", "OPTIONS"])
+def get_role():
+    if request.method == "OPTIONS":
+        return "", 200
+    email = request.json.get("email")
+    db = get_db()
+    cursor = db.cursor(dictionary=True)
+    cursor.execute("SELECT role FROM users WHERE email = %s", (email,))
+    user = cursor.fetchone()
+    cursor.close()
+    db.close()
+    return jsonify(user or {"role": "student"})
+
+# UPDATE GROUP
+@app.route("/update-group/<group_id>", methods=["PUT"])
+def update_group(group_id):
+    data       = request.json
+    group_name = data.get("group_name")
+    unit       = data.get("unit")
+    db         = get_db()
+    cursor     = db.cursor()
+    cursor.execute("""
+        UPDATE groups_table SET group_name = %s, unit = %s
+        WHERE id = %s
+    """, (group_name, unit, group_id))
+    db.commit()
+    cursor.close()
+    db.close()
+    return jsonify({"message": "Group updated"})
+
+# ADD MEMBER
+@app.route("/add-member", methods=["POST"])
+def add_member():
+    data       = request.json
+    group_id   = data.get("group_id")
+    user_email = data.get("user_email")
+    role       = data.get("role", "member")
+    db         = get_db()
+    cursor     = db.cursor()
+    # Check if already a member
+    cursor.execute("""
+        SELECT id FROM group_members
+        WHERE group_id = %s AND user_email = %s
+    """, (group_id, user_email))
+    existing = cursor.fetchone()
+    if existing:
+        cursor.close()
+        db.close()
+        return jsonify({"message": "Already a member"}), 400
+    cursor.execute("""
+        INSERT INTO group_members (group_id, user_email, role)
+        VALUES (%s, %s, %s)
+    """, (group_id, user_email, role))
+    db.commit()
+    cursor.close()
+    db.close()
+    return jsonify({"message": "Member added"})
+
+# REMOVE MEMBER
+@app.route("/remove-member", methods=["DELETE"])
+def remove_member():
+    data       = request.json
+    group_id   = data.get("group_id")
+    user_email = data.get("user_email")
+    db         = get_db()
+    cursor     = db.cursor()
+    cursor.execute("""
+        DELETE FROM group_members
+        WHERE group_id = %s AND user_email = %s
+    """, (group_id, user_email))
+    db.commit()
+    cursor.close()
+    db.close()
+    return jsonify({"message": "Member removed"})
+
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
