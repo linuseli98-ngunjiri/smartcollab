@@ -3,3 +3,4 @@ y/google-cloud-sdk/
 __pycache__/
 *.pyc
 serviceaccount.json
+.env
