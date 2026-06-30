@@ -112,11 +112,27 @@ def create_group():
             "token":   TRELLO_TOKEN
         })
 
-    # 3. Create Google Drive folder
+    # 3. Add members to Trello board
+    for email in members:
+        member_res = requests.get(f"{TRELLO_BASE}/members/{email}", params={
+            "key":   TRELLO_API_KEY,
+            "token": TRELLO_TOKEN
+        })
+        if member_res.status_code == 200:
+            member_data = member_res.json()
+            member_id = member_data.get("id")
+            if member_id:
+                requests.put(f"{TRELLO_BASE}/boards/{board_id}/members/{member_id}", params={
+                    "key":   TRELLO_API_KEY,
+                    "token": TRELLO_TOKEN,
+                    "type":  "normal"
+                })
+
+    # 4. Create Google Drive folder
     folder_name = f"{unit} — {group_name}"
     drive_folder_id, drive_folder_url = create_drive_folder(folder_name)
 
-    # 4. Save to MySQL
+    # 5. Save to MySQL
     group_id = str(uuid.uuid4())
     db = get_db()
     cursor = db.cursor()
@@ -127,7 +143,7 @@ def create_group():
         VALUES (%s, %s, %s, %s, %s, %s, %s)
     """, (group_id, group_name, unit, board_id, board_url, drive_folder_id, drive_folder_url))
 
-    # 5. Save members to MySQL
+    # 6. Save members to MySQL
     for email in members:
         cursor.execute("""
             INSERT INTO group_members (group_id, user_email)
