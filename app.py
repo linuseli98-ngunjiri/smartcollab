@@ -368,10 +368,10 @@ def my_score(group_id, email):
         SELECT * FROM contribution_scores
         WHERE group_id = %s AND user_email = %s
     """, (group_id, email))
-    score = cursor.fetchone()
+    rows = cursor.fetchall()
     cursor.close()
     db.close()
-    return jsonify(score or {})
+    return jsonify(rows[0] if rows else {})
 
 
 # GET USER ROLE POST
@@ -450,5 +450,36 @@ def remove_member():
     db.close()
     return jsonify({"message": "Member removed"})
 
+@app.route("/log-activity", methods=["POST", "OPTIONS"])
+def log_activity():
+    if request.method == "OPTIONS":
+        return "", 200
+    data       = request.json
+    group_id   = data.get("group_id")
+    user_email = data.get("user_email")
+    action     = data.get("action", "dashboard_view")
+
+    db = get_db()
+    cursor = db.cursor()
+
+    # Log to activity_logs
+    cursor.execute("""
+        INSERT INTO activity_logs (group_id, user_email, action_type, description)
+        VALUES (%s, %s, %s, %s)
+    """, (group_id, user_email, "app_activity", action))
+
+    # Update activity_score (5 points per event, cap handled client-side if needed)
+    cursor.execute("""
+        INSERT INTO contribution_scores (group_id, user_email, activity_score, total_score)
+        VALUES (%s, %s, 5, 5)
+        ON DUPLICATE KEY UPDATE
+        activity_score = activity_score + 5,
+        total_score = total_score + 5
+    """, (group_id, user_email))
+
+    db.commit()
+    cursor.close()
+    db.close()
+    return jsonify({"message": "Activity logged"})
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
