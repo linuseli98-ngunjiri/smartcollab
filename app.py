@@ -124,7 +124,17 @@ def create_group():
             "token":   TRELLO_TOKEN
         })
 
-    # 3. Add members to Trello board
+    # 3.Register Trello Webhook for this board automatically
+    webhook_url = os.getenv("BACKEND_URL", "https://smartcollab-backend-781602191566.us-central1.run.app")
+    requests.post(f"{TRELLO_BASE}/webhooks", json={
+        "key":         TRELLO_API_KEY,
+        "token":       TRELLO_TOKEN,
+        "callbackURL": f"{webhook_url}/trello-webhook",
+        "idModel":     board_id,
+        "description": f"SmartCollab webhook - {group_name}"
+    })
+
+    # 4. Add members to Trello board
     for email in members:
         member_res = requests.get(f"{TRELLO_BASE}/members/{email}", params={
             "key":   TRELLO_API_KEY,
@@ -140,11 +150,11 @@ def create_group():
                     "type":  "normal"
                 })
 
-    # 4. Create Google Drive folder
+    # 5. Create Google Drive folder
     folder_name = f"{unit} — {group_name}"
     drive_folder_id, drive_folder_url = create_drive_folder(folder_name)
 
-    # 5. Save to MySQL
+    # 6. Save to MySQL
     group_id = str(uuid.uuid4())
     db = get_db()
     cursor = db.cursor()
@@ -155,7 +165,7 @@ def create_group():
         VALUES (%s, %s, %s, %s, %s, %s, %s)
     """, (group_id, group_name, unit, board_id, board_url, drive_folder_id, drive_folder_url))
 
-    # 6. Save members to MySQL
+    # 7. Save members to MySQL
     for email in members:
         cursor.execute("""
             INSERT INTO group_members (group_id, user_email)
