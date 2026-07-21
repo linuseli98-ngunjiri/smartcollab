@@ -45,24 +45,36 @@ TRELLO_TOKEN   = os.getenv("TRELLO_TOKEN")
 TRELLO_BASE    = "https://api.trello.com/1"
 
 # Firebase init (auth only)
-cred = credentials.Certificate("serviceaccount.json")
+cred = credentials.Certificate(os.getenv("FIREBASE_CRED_PATH", "serviceaccount.json"))
 firebase_admin.initialize_app(cred)
 
 # Google Drive init
 SCOPES = ["https://www.googleapis.com/auth/drive"]
 drive_creds = service_account.Credentials.from_service_account_file(
-    "serviceaccount.json", scopes=SCOPES
+    os.getenv("FIREBASE_CRED_PATH", "serviceaccount.json"), scopes=SCOPES
 )
 drive_service = build("drive", "v3", credentials=drive_creds)
 
 # MySQL connection
 def get_db():
-    return mysql.connector.connect(
-        host="127.0.0.1",
-        user="smartcollab",
-        password="smartcollab123",
-        database="smartcollab"
-    )
+    db_host = os.getenv("DB_HOST", "127.0.0.1")
+    db_port = os.getenv("DB_PORT", "3306")
+    
+    if db_host.startswith("/cloudsql/"):
+        return mysql.connector.connect(
+            unix_socket=db_host,
+            user=os.getenv("DB_USER", "smartcollab"),
+            password=os.getenv("DB_PASSWORD", "smartcollab123"),
+            database=os.getenv("DB_NAME", "smartcollab")
+        )
+    else:
+        return mysql.connector.connect(
+            host=db_host,
+            port=db_port,
+            user=os.getenv("DB_USER", "smartcollab"),
+            password=os.getenv("DB_PASSWORD", "smartcollab123"),
+            database=os.getenv("DB_NAME", "smartcollab")
+        )
 
 def create_drive_folder(folder_name):
     file_metadata = {
