@@ -428,14 +428,17 @@ def update_group(group_id):
     return jsonify({"message": "Group updated"})
 
 # ADD MEMBER
-@app.route("/add-member", methods=["POST"])
+@app.route("/add-member", methods=["POST", "OPTIONS"])
 def add_member():
+    if request.method == "OPTIONS":
+        return "", 200
     data       = request.json
     group_id   = data.get("group_id")
     user_email = data.get("user_email")
     role       = data.get("role", "member")
     db         = get_db()
-    cursor     = db.cursor()
+    cursor     = db.cursor(dictionary=True)
+
     # Check if already a member
     cursor.execute("""
         SELECT id FROM group_members
@@ -446,17 +449,42 @@ def add_member():
         cursor.close()
         db.close()
         return jsonify({"message": "Already a member"}), 400
-    cursor.execute("""
+
+    # Get the board_id for this group
+    cursor.execute("SELECT board_id FROM groups_table WHERE id = %s", (group_id,))
+    group_row = cursor.fetchone()
+    board_id = group_row["board_id"] if group_row else None
+
+    # Add to Trello board if board_id exists
+    if board_id:
+        member_res = requests.get(f"{TRELLO_BASE}/members/{user_email}", params={
+            "key":   TRELLO_API_KEY,
+            "token": TRELLO_TOKEN
+        })
+        if member_res.status_code == 200:
+            member_data = member_res.json()
+            trello_member_id = member_data.get("id")
+            if trello_member_id:
+                requests.put(f"{TRELLO_BASE}/boards/{board_id}/members/{trello_member_id}", params={
+                    "key":   TRELLO_API_KEY,
+                    "token": TRELLO_TOKEN,
+                    "type":  "normal"
+                })
+
+    # Insert into MySQL
+    cursor2 = db.cursor()
+    cursor2.execute("""
         INSERT INTO group_members (group_id, user_email, role)
         VALUES (%s, %s, %s)
     """, (group_id, user_email, role))
     db.commit()
     cursor.close()
+    cursor2.close()
     db.close()
     return jsonify({"message": "Member added"})
 
 # REMOVE MEMBER
-@app.route("/remove-member", methods=["DELETE"])
+@app.route("/remove-member", methods=["DELETE", "OPTIONS"])
 def remove_member():
     data       = request.json
     group_id   = data.get("group_id")
