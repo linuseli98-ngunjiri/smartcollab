@@ -237,6 +237,8 @@ def trello_webhook():
         member = email_row[0]
     card_name   = data.get("action", {}).get("data", {}).get("card", {}).get("name", "")
     board_id    = data.get("action", {}).get("data", {}).get("board", {}).get("id", "")
+    list_before = data.get("action", {}).get("data", {}).get("listBefore", {}).get("name", "")
+    list_after  = data.get("action", {}).get("data", {}).get("listAfter", {}).get("name", "")
 
     # Map action type to description
     descriptions = {
@@ -259,21 +261,32 @@ def trello_webhook():
     db.close()
 
     # Update contribution scores
-    update_scores(board_id, member, action_type)
+    update_scores(board_id, member, action_type, list_before, list_after)
 
     return jsonify({"status": "ok"})
 
 # ---
-def update_scores(board_id, user_email, action_type):
+def update_scores(board_id, user_email, action_type, list_before="", list_after=""):
+    # Define workflow order — used to detect forward vs backward movement
+    workflow_order = {"To Do": 0, "In Progress": 1, "Done": 2, "Submitted": 3}
+
     weights = {
         "updateCard":          30,
         "addAttachmentToCard": 20,
         "commentCard":         20,
         "createCard":          10,
     }
+
+    # For card moves, only award points if the card moved forward in the workflow
+    if action_type == "updateCard":
+        before_rank = workflow_order.get(list_before, None)
+        after_rank  = workflow_order.get(list_after, None)
+        if before_rank is None or after_rank is None or after_rank <= before_rank:
+            # Not a genuine forward move (e.g. same list, backward move, or non-list update) — skip scoring
+            return
+
     points = weights.get(action_type, 5)
 
-    # Map action type to the correct score column
     column_map = {
         "updateCard":          "tasks_score",
         "createCard":          "tasks_score",
@@ -285,7 +298,6 @@ def update_scores(board_id, user_email, action_type):
     db = get_db()
     cursor = db.cursor()
 
-    # Get group_id from board_id
     cursor.execute("SELECT id FROM groups_table WHERE board_id = %s LIMIT 1", (board_id,))
     row = cursor.fetchone()
     if not row:
@@ -294,8 +306,7 @@ def update_scores(board_id, user_email, action_type):
         return
     group_id = row[0]
 
-    # Upsert contribution score into the correct column
-    cursor.execute("""
+    cursor.execute(f"""
         INSERT INTO contribution_scores (group_id, user_email, {score_column})
         VALUES (%s, %s, %s)
         ON DUPLICATE KEY UPDATE
