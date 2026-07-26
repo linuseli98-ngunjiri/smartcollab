@@ -135,6 +135,7 @@ def create_group():
     })
 
     # 4. Add members to Trello board
+    member_trello_usernames = {}
     for email in members:
         member_res = requests.get(f"{TRELLO_BASE}/members/{email}", params={
             "key":   TRELLO_API_KEY,
@@ -143,6 +144,7 @@ def create_group():
         if member_res.status_code == 200:
             member_data = member_res.json()
             member_id = member_data.get("id")
+            member_trello_usernames[email] = member_data.get("username")
             if member_id:
                 requests.put(f"{TRELLO_BASE}/boards/{board_id}/members/{member_id}", params={
                     "key":   TRELLO_API_KEY,
@@ -168,9 +170,9 @@ def create_group():
     # 7. Save members to MySQL
     for email in members:
         cursor.execute("""
-            INSERT INTO group_members (group_id, user_email)
-            VALUES (%s, %s)
-        """, (group_id, email))
+            INSERT INTO group_members (group_id, user_email, trello_username)
+            VALUES (%s, %s, %s)
+        """, (group_id, email, member_trello_usernames.get(email)))
 
     db.commit()
     cursor.close()
@@ -224,6 +226,15 @@ def trello_webhook():
     data        = request.json
     action_type = data.get("action", {}).get("type", "")
     member      = data.get("action", {}).get("memberCreator", {}).get("username", "unknown")
+    # Resolve Trello username to the student's real email
+    db_lookup = get_db()
+    cursor_lookup = db_lookup.cursor()
+    cursor_lookup.execute("SELECT user_email FROM group_members WHERE trello_username = %s LIMIT 1", (member,))
+    email_row = cursor_lookup.fetchone()
+    cursor_lookup.close()
+    db_lookup.close()
+    if email_row:
+        member = email_row[0]
     card_name   = data.get("action", {}).get("data", {}).get("card", {}).get("name", "")
     board_id    = data.get("action", {}).get("data", {}).get("board", {}).get("id", "")
 
