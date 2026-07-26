@@ -273,6 +273,15 @@ def update_scores(board_id, user_email, action_type):
     }
     points = weights.get(action_type, 5)
 
+    # Map action type to the correct score column
+    column_map = {
+        "updateCard":          "tasks_score",
+        "createCard":          "tasks_score",
+        "addAttachmentToCard": "files_score",
+        "commentCard":         "comments_score",
+    }
+    score_column = column_map.get(action_type, "tasks_score")
+
     db = get_db()
     cursor = db.cursor()
 
@@ -285,12 +294,12 @@ def update_scores(board_id, user_email, action_type):
         return
     group_id = row[0]
 
-    # Upsert contribution score
+    # Upsert contribution score into the correct column
     cursor.execute("""
-        INSERT INTO contribution_scores (group_id, user_email, tasks_score)
+        INSERT INTO contribution_scores (group_id, user_email, {score_column})
         VALUES (%s, %s, %s)
         ON DUPLICATE KEY UPDATE
-        tasks_score = tasks_score + %s,
+        {score_column} = {score_column} + %s,
         total_score = total_score + %s
     """, (group_id, user_email, points, points, points))
 
