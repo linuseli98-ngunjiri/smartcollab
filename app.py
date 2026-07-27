@@ -323,11 +323,13 @@ def get_scores(group_id):
     db = get_db()
     cursor = db.cursor(dictionary=True)
     cursor.execute("""
-        SELECT user_email, tasks_score, files_score, 
-               comments_score, activity_score, peer_score, total_score
-        FROM contribution_scores
-        WHERE group_id = %s
-        ORDER BY total_score DESC
+        SELECT cs.user_email, cs.tasks_score, cs.files_score, 
+               cs.comments_score, cs.activity_score, cs.peer_score, cs.total_score
+        FROM contribution_scores cs
+        INNER JOIN group_members gm 
+            ON cs.group_id = gm.group_id AND cs.user_email = gm.user_email
+        WHERE cs.group_id = %s
+        ORDER BY cs.total_score DESC
     """, (group_id,))
     scores = cursor.fetchall()
     cursor.close()
