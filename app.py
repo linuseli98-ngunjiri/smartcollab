@@ -486,6 +486,8 @@ def add_member():
     group_row = cursor.fetchone()
     board_id = group_row["board_id"] if group_row else None
 
+    trello_username = None
+
     # Add to Trello board if board_id exists
     if board_id:
         member_res = requests.get(f"{TRELLO_BASE}/members/{user_email}", params={
@@ -495,6 +497,7 @@ def add_member():
         if member_res.status_code == 200:
             member_data = member_res.json()
             trello_member_id = member_data.get("id")
+            trello_username = member_data.get("username")
             if trello_member_id:
                 requests.put(f"{TRELLO_BASE}/boards/{board_id}/members/{trello_member_id}", params={
                     "key":   TRELLO_API_KEY,
@@ -505,9 +508,9 @@ def add_member():
     # Insert into MySQL
     cursor2 = db.cursor()
     cursor2.execute("""
-        INSERT INTO group_members (group_id, user_email, role)
-        VALUES (%s, %s, %s)
-    """, (group_id, user_email, role))
+        INSERT INTO group_members (group_id, user_email, role, trello_username)
+        VALUES (%s, %s, %s, %s)
+    """, (group_id, user_email, role, trello_username))
     db.commit()
     cursor.close()
     cursor2.close()
